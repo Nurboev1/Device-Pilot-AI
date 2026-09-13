@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.automirrored.filled.KeyboardReturn
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -167,7 +168,7 @@ private fun iconFor(tool: String) = when {
     tool.startsWith("tap") || tool == "long_press" -> Icons.Default.TouchApp
     tool == "type_text" -> Icons.Default.Keyboard
     tool == "swipe" -> Icons.Default.SwipeVertical
-    tool == "press_key" -> Icons.Default.KeyboardReturn
+    tool == "press_key" -> Icons.AutoMirrored.Filled.KeyboardReturn
     tool == "open_app" || tool == "list_apps" || tool.contains("app") -> Icons.Default.Apps
     tool.startsWith("set_") -> Icons.Default.Tune
     tool == "shell" -> Icons.Default.Terminal

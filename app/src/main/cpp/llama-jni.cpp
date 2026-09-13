@@ -81,7 +81,6 @@ Java_com_devicepilot_ai_llm_LlamaEngine_nativeInitModel(
 
     llama_model_params model_params = llama_model_default_params();
     model_params.n_gpu_layers = 0;
-    model_params.use_mmap = true;
 
     llama_model *model = llama_model_load_from_file(model_path.c_str(), model_params);
     if (!model) {
@@ -211,7 +210,7 @@ Java_com_devicepilot_ai_llm_LlamaEngine_nativeGenerate(
     auto sparams = llama_sampler_chain_default_params();
     sparams.no_perf = true;
     llama_sampler *smpl = llama_sampler_chain_init(sparams);
-    llama_sampler_chain_add(smpl, llama_sampler_init_penalties(64, 1.1f, 0.0f, 0.0f));
+    llama_sampler_chain_add(smpl, llama_sampler_init_penalties(llama_vocab_n_tokens(vocab), 64, 1.1f, 0.0f, 0.0f));
     float temp = temperature;
     if (temp <= 0.01f) {
         llama_sampler_chain_add(smpl, llama_sampler_init_greedy());

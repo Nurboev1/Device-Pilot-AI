@@ -142,7 +142,7 @@ class ModelManager(private val context: Context) {
                 conn = c
             }
 
-            val http: HttpURLConnection = conn ?: throw IllegalStateException("No connection")
+            val http: HttpURLConnection = conn!!
             val resuming = http.responseCode == 206
             if (!resuming && downloaded > 0) {
                 part.delete(); downloaded = 0
