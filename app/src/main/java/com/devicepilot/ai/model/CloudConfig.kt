@@ -31,15 +31,15 @@ object CloudProviders {
         listOf("llama-3.3-70b-versatile", "llama-3.1-8b-instant", "qwen/qwen3-32b", "moonshotai/kimi-k2-instruct"))
     val OPENROUTER = CloudProvider("openrouter", "OpenRouter", "https://openrouter.ai/api/v1", "openai/gpt-4o-mini", "https://openrouter.ai/keys",
         listOf("openai/gpt-4o-mini", "anthropic/claude-3.5-haiku", "google/gemini-2.0-flash-001", "qwen/qwen-2.5-72b-instruct", "meta-llama/llama-3.3-70b-instruct"))
-    val GEMINI = CloudProvider("gemini", "Google Gemini", "https://generativelanguage.googleapis.com/v1beta/openai", "gemini-2.0-flash", "https://aistudio.google.com/apikey",
-        listOf("gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-pro"))
+    val GEMINI = CloudProvider("gemini", "Google Gemini (free tier)", "https://generativelanguage.googleapis.com/v1beta/openai", "gemini-2.5-flash", "https://aistudio.google.com/apikey",
+        listOf("gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.5-flash-lite", "gemini-3-flash-preview"))
     val DEEPSEEK = CloudProvider("deepseek", "DeepSeek", "https://api.deepseek.com/v1", "deepseek-chat", "https://platform.deepseek.com/api_keys",
         listOf("deepseek-chat"))
     val CUSTOM = CloudProvider("custom", "Custom (OpenAI-compatible)", "http://192.168.1.100:11434/v1", "qwen2.5:7b", "",
         listOf())
 
-    val all = listOf(GROQ, OPENAI, GEMINI, OPENROUTER, DEEPSEEK, CUSTOM)
-    fun byId(id: String?) = all.firstOrNull { it.id == id } ?: GROQ
+    val all = listOf(GEMINI, GROQ, OPENAI, OPENROUTER, DEEPSEEK, CUSTOM)
+    fun byId(id: String?) = all.firstOrNull { it.id == id } ?: GEMINI
 }
 
 /** Persists brain mode + cloud credentials. Keys live in app-private SharedPreferences. */
