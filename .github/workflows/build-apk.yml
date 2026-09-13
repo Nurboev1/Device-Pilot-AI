@@ -18,7 +18,7 @@ jobs:
           submodules: recursive
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 17
@@ -40,9 +40,21 @@ jobs:
           key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', 'gradle/wrapper/gradle-wrapper.properties') }}
 
       - name: Build debug APK
+        id: build
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon --stacktrace
+          set -o pipefail
+          ./gradlew assembleDebug --no-daemon 2>&1 | tee build.log
+
+      - name: Report errors
+        if: failure()
+        run: |
+          {
+            echo "## Build errors"
+            echo '```'
+            grep -E "^e: |error:|What went wrong|Caused by|FAILED|\.kt:[0-9]+" build.log | head -150
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
