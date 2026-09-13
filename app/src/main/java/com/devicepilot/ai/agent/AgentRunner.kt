@@ -40,6 +40,11 @@ class AgentRunner(
     /** Conversation memory across tasks (user turns, replies, done summaries). */
     private val history = mutableListOf<Turn>()
 
+    private val grammar: String by lazy { ToolGrammar.build(registry) }
+
+    /** Constant prefix of every prompt; prefilled once so the first step is fast. */
+    fun systemPrompt(deviceHint: String): String = AgentPrompt.system(registry, deviceHint)
+
     @Volatile private var pendingConfirmation: CompletableDeferred<Boolean>? = null
     @Volatile private var pendingAnswer: CompletableDeferred<String>? = null
 
@@ -53,7 +58,7 @@ class AgentRunner(
     fun clearHistory() { history.clear(); engine.resetCache() }
 
     fun run(userText: String, deviceHint: String): Flow<AgentEvent> = channelFlow {
-        val systemPrompt = AgentPrompt.system(registry, deviceHint)
+        val systemPrompt = systemPrompt(deviceHint)
         history += Turn.User(userText)
         // Keep memory bounded: only keep the last few tasks' textual turns + this task's turns.
         trimHistory()
@@ -71,7 +76,7 @@ class AgentRunner(
                 // --- Think --------------------------------------------------------
                 val buf = StringBuilder()
                 val raw = withContext(Dispatchers.IO) {
-                    engine.generate(prompt, config.maxTokensPerStep, config.temperature) { tok ->
+                    engine.generate(prompt, config.maxTokensPerStep, config.temperature, grammar) { tok ->
                         buf.append(tok)
                         trySend(AgentEvent.Thinking(buf.toString()))
                     }

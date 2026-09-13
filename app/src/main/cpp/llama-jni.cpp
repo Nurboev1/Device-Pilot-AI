@@ -128,7 +128,7 @@ Java_com_devicepilot_ai_llm_LlamaEngine_nativeInitModel(
 JNIEXPORT jstring JNICALL
 Java_com_devicepilot_ai_llm_LlamaEngine_nativeGenerate(
         JNIEnv *env, jobject, jlong handle, jstring j_prompt,
-        jint max_tokens, jfloat temperature, jobject callback) {
+        jint max_tokens, jfloat temperature, jstring j_grammar, jobject callback) {
     auto *state = reinterpret_cast<LlamaEngineState *>(handle);
     if (!state || !state->ctx) return env->NewStringUTF("Error: engine not initialized.");
     if (j_prompt == nullptr) return env->NewStringUTF("");
@@ -136,6 +136,13 @@ Java_com_devicepilot_ai_llm_LlamaEngine_nativeGenerate(
     const char *cprompt = env->GetStringUTFChars(j_prompt, nullptr);
     std::string prompt(cprompt);
     env->ReleaseStringUTFChars(j_prompt, cprompt);
+
+    std::string grammar;
+    if (j_grammar != nullptr) {
+        const char *cg = env->GetStringUTFChars(j_grammar, nullptr);
+        grammar = cg ? cg : "";
+        env->ReleaseStringUTFChars(j_grammar, cg);
+    }
 
     jmethodID on_token = nullptr;
     if (callback) {
@@ -158,8 +165,9 @@ Java_com_devicepilot_ai_llm_LlamaEngine_nativeGenerate(
     const int n_prompt = (int) prompt_tokens.size();
     if (n_prompt == 0) return env->NewStringUTF("Error: empty prompt after tokenization.");
 
-    int gen_budget = max_tokens > 0 ? max_tokens : 256;
-    if (n_prompt + gen_budget > state->n_ctx) {
+    const bool prefill_only = (max_tokens == 0);
+    int gen_budget = max_tokens > 0 ? max_tokens : (prefill_only ? 0 : 256);
+    if (!prefill_only && n_prompt + gen_budget > state->n_ctx) {
         gen_budget = state->n_ctx - n_prompt;
         if (gen_budget < 16) {
             LOGE("Prompt too long: %d tokens (ctx %d)", n_prompt, state->n_ctx);
@@ -205,11 +213,23 @@ Java_com_devicepilot_ai_llm_LlamaEngine_nativeGenerate(
         }
     }
     state->cached_tokens = prompt_tokens;
+    if (prefill_only) {
+        LOGI("Prefill-only call complete (%d tokens cached)", n_prompt);
+        return env->NewStringUTF("");
+    }
 
     // --- Sampler --------------------------------------------------------------
     auto sparams = llama_sampler_chain_default_params();
     sparams.no_perf = true;
     llama_sampler *smpl = llama_sampler_chain_init(sparams);
+    if (!grammar.empty()) {
+        llama_sampler *g = llama_sampler_init_grammar(vocab, grammar.c_str(), "root");
+        if (g) {
+            llama_sampler_chain_add(smpl, g);
+        } else {
+            LOGE("Grammar failed to compile; generating unconstrained");
+        }
+    }
     llama_sampler_chain_add(smpl, llama_sampler_init_penalties(llama_vocab_n_tokens(vocab), 64, 1.1f, 0.0f, 0.0f));
     float temp = temperature;
     if (temp <= 0.01f) {

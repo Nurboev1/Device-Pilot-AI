@@ -97,6 +97,7 @@ class AgentSession(private val app: Context) {
             engine.setState(ModelState.Downloading(spec, 0f, 0, spec.approxBytes))
             val file = models.ensureDownloaded(spec)
             engine.load(spec, file)
+            warmUp()
         } catch (t: Throwable) {
             Log.e(TAG, "prepareModel failed", t)
             engine.setState(ModelState.Error(spec, t.message ?: "Download failed"))
@@ -104,6 +105,17 @@ class AgentSession(private val app: Context) {
     }
 
     fun setAutoConfirm(v: Boolean) { _autoConfirm.value = v }
+
+    @Volatile private var cachedHint: String? = null
+
+    /** Prefill the (constant) system prompt so the first user message doesn't pay for it. */
+    private suspend fun warmUp() {
+        if (!engine.isReady) return
+        val hint = deviceHint().also { cachedHint = it }
+        val prefix = AgentPrompt.build(runner.systemPrompt(hint), emptyList()).substringBefore("<|im_start|>assistant")
+        engine.warmUp(prefix)
+        Log.i(TAG, "Prompt warm-up complete")
+    }
 
     // ---------------------------------------------------------------- chat
 
@@ -128,8 +140,9 @@ class AgentSession(private val app: Context) {
         startService()
 
         taskJob = scope.launch {
-            val hint = deviceHint()
-            runner.run(t, hint).collect { ev -> handle(agentMsg.id, ev) }
+            val hint = cachedHint ?: deviceHint().also { cachedHint = it }
+            val userText = if (ShizukuManager.isReady()) t else "$t\n(Note: Shizuku is NOT connected, device tools will fail. If a device action is needed, reply telling the user to start Shizuku and grant permission.)"
+            runner.run(userText, hint).collect { ev -> handle(agentMsg.id, ev) }
         }.also { job ->
             job.invokeOnCompletion {
                 _isRunning.value = false
@@ -185,9 +198,9 @@ class AgentSession(private val app: Context) {
     }
 
     private suspend fun deviceHint(): String {
-        if (!ShizukuManager.isReady()) return "Shizuku: NOT CONNECTED — device tools will fail. Tell the user to start Shizuku and grant permission."
-        val r = ShizukuShell.run("echo \"Android $(getprop ro.build.version.release), $(getprop ro.product.manufacturer) $(getprop ro.product.model), display $(wm size | tail -1 | grep -oE '[0-9]+x[0-9]+')\"")
-        return r.stdout.trim().ifBlank { "Android device" } + ". Shizuku connected."
+        // Must be stable across the session so the prefilled system prompt stays cache-valid.
+        val r = ShizukuShell.run("echo \"Android $(getprop ro.build.version.release), $(getprop ro.product.manufacturer) $(getprop ro.product.model)\"")
+        return r.stdout.trim().ifBlank { "Android ${android.os.Build.VERSION.RELEASE}, ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}" }
     }
 
     private fun startService() {

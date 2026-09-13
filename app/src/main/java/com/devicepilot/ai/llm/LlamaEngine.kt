@@ -87,14 +87,14 @@ class LlamaEngine {
     /**
      * Streams generated text. Completes when generation ends or [cancel] is called.
      */
-    fun generateStream(prompt: String, maxTokens: Int = 384, temperature: Float = 0.2f): Flow<String> = channelFlow {
+    fun generateStream(prompt: String, maxTokens: Int = 384, temperature: Float = 0.2f, grammar: String? = null): Flow<String> = channelFlow {
         withContext(Dispatchers.IO) {
             if (!isReady) {
                 trySend("Error: no model loaded.")
                 return@withContext
             }
             try {
-                val result = nativeGenerate(nativeHandle, prompt, maxTokens, temperature) { token -> trySend(token) }
+                val result = nativeGenerate(nativeHandle, prompt, maxTokens, temperature, grammar) { token -> trySend(token) }
                 if (result.startsWith("Error:")) trySend(result)
             } catch (t: Throwable) {
                 Log.e(TAG, "Generation error", t)
@@ -104,11 +104,17 @@ class LlamaEngine {
     }.buffer(Channel.UNLIMITED)
 
     /** Non-streaming convenience for the agent loop. */
-    suspend fun generate(prompt: String, maxTokens: Int = 384, temperature: Float = 0.2f, onToken: ((String) -> Unit)? = null): String =
+    suspend fun generate(prompt: String, maxTokens: Int = 384, temperature: Float = 0.2f, grammar: String? = null, onToken: ((String) -> Unit)? = null): String =
         withContext(Dispatchers.IO) {
             if (!isReady) return@withContext "Error: no model loaded."
-            nativeGenerate(nativeHandle, prompt, maxTokens, temperature) { onToken?.invoke(it) }
+            nativeGenerate(nativeHandle, prompt, maxTokens, temperature, grammar) { onToken?.invoke(it) }
         }
+
+    /** Prefills [prompt] into the KV cache without generating, so the next call that shares this prefix is fast. */
+    suspend fun warmUp(prompt: String) = withContext(Dispatchers.IO) {
+        if (!isReady) return@withContext
+        try { nativeGenerate(nativeHandle, prompt, 0, 0f, null) { } } catch (t: Throwable) { Log.w(TAG, "warmUp failed: ${t.message}") }
+    }
 
     fun cancel() {
         if (isReady) nativeCancel(nativeHandle)
@@ -132,7 +138,7 @@ class LlamaEngine {
     }
 
     private external fun nativeInitModel(modelPath: String, nThreads: Int, nCtx: Int): Long
-    private external fun nativeGenerate(handle: Long, prompt: String, maxTokens: Int, temperature: Float, callback: TokenCallback): String
+    private external fun nativeGenerate(handle: Long, prompt: String, maxTokens: Int, temperature: Float, grammar: String?, callback: TokenCallback): String
     private external fun nativeCancel(handle: Long)
     private external fun nativeResetCache(handle: Long)
     private external fun nativeFreeModel(handle: Long)

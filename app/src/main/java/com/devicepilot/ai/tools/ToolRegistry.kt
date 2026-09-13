@@ -36,7 +36,7 @@ class ToolRegistry(context: Context) {
                     val ty = p.choices?.joinToString("|") ?: p.type
                     (if (p.required) p.name else p.name + "?") + ": " + ty
                 })
-                sb.append(") — ").append(t.description.substringBefore(". ").take(120))
+                sb.append(") — ").append(t.description.substringBefore(". ").substringBefore(": ").take(70))
                 if (t.risk == Risk.CONFIRM) sb.append(" [needs confirmation]")
                 sb.append('\n')
             }
