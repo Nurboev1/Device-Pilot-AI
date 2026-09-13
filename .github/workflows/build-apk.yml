@@ -42,12 +42,16 @@ jobs:
             ~/.gradle/wrapper
           key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', 'gradle/wrapper/gradle-wrapper.properties') }}
 
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.6"
+
       - name: Build debug APK
         id: build
         run: |
-          chmod +x gradlew
           set -o pipefail
-          ./gradlew assembleDebug --no-daemon 2>&1 | tee build.log
+          gradle assembleDebug --no-daemon 2>&1 | tee build.log
 
       - name: Report errors
         if: failure()
