@@ -203,7 +203,8 @@ class AgentRunner(
             throw e
         } catch (t: Throwable) {
             Log.e(TAG, "Agent loop crashed", t)
-            send(AgentEvent.Failed(t.message ?: "Unexpected error"))
+            val cause = (t as? ExceptionInInitializerError)?.cause ?: t
+            send(AgentEvent.Failed("${cause::class.java.simpleName}: ${cause.message ?: "no message"}"))
         }
     }.buffer(Channel.UNLIMITED)
 

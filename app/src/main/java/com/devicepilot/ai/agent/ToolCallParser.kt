@@ -13,7 +13,7 @@ data class ParsedCall(val name: String, val arguments: JSONObject, val thought: 
 object ToolCallParser {
 
     private val tagRegex = Regex("""<tool_call>\s*(.*?)\s*(</tool_call>|$)""", RegexOption.DOT_MATCHES_ALL)
-    private val fenceRegex = Regex("""```(?:json)?\s*(\{.*?})\s*```""", RegexOption.DOT_MATCHES_ALL)
+    private val fenceRegex = Regex("""```(?:json)?\s*(\{.*?\})\s*```""", RegexOption.DOT_MATCHES_ALL)
 
     fun parse(raw: String): ParsedCall? {
         val text = raw.trim()
@@ -82,7 +82,7 @@ object ToolCallParser {
         try { return JSONObject(body) } catch (_: Throwable) { }
 
         // Repairs: trailing commas, single quotes, unclosed braces, Python literals
-        body = body.replace(Regex(""",\s*([}\]])"""), "$1")
+        body = body.replace(Regex(""",\s*([\}\]])"""), "$1")
         body = body.replace(Regex("""(?<=[{,]\s{0,8})'([^']+)'\s*:"""), "\"$1\":")
         body = body.replace(Regex(""":\s*'([^']*)'"""), ": \"$1\"")
         body = body.replace(Regex("""\bTrue\b"""), "true").replace(Regex("""\bFalse\b"""), "false").replace(Regex("""\bNone\b"""), "null")
