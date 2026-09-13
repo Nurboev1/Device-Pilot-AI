@@ -33,7 +33,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.devicepilot.ai.llm.ModelState
 import com.devicepilot.ai.shizuku.ShizukuState
 import com.devicepilot.ai.ui.components.MessageBubble
@@ -57,9 +58,13 @@ fun ChatScreen(viewModel: ChatViewModel) {
 
     // Ask for notification permission once (needed for the foreground-service notification on 13+)
     var hasOverlay by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
-    LifecycleResumeEffect(Unit) {
-        hasOverlay = Settings.canDrawOverlays(context)
-        onPauseOrDispose { }
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) hasOverlay = Settings.canDrawOverlays(context)
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     val notifLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
