@@ -5,6 +5,8 @@ import androidx.lifecycle.AndroidViewModel
 import com.devicepilot.ai.DevicePilotApp
 import com.devicepilot.ai.agent.AgentSession
 import com.devicepilot.ai.model.ModelSpec
+import com.devicepilot.ai.model.BrainMode
+import com.devicepilot.ai.model.CloudProvider
 import com.devicepilot.ai.shizuku.ShizukuManager
 
 /**
@@ -22,6 +24,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     val selectedModel get() = session.models.selected
     val installedModels get() = session.models.installed
     val autoConfirm get() = session.autoConfirm
+    val brainMode get() = session.brainSettings.mode
+    val cloudConfig get() = session.brainSettings.cloud
+    val brainReady get() = session.brainReady
 
     fun send(text: String) = session.send(text)
     fun stop() = session.stop()
@@ -31,6 +36,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun retryModel() = session.retryModel()
     fun deleteModel(spec: ModelSpec) = session.deleteModel(spec)
     fun setAutoConfirm(v: Boolean) = session.setAutoConfirm(v)
+    fun setBrainMode(m: BrainMode) = session.setBrainMode(m)
+    fun setProvider(p: CloudProvider) = session.brainSettings.setProvider(p)
+    fun updateCloud(baseUrl: String? = null, model: String? = null, apiKey: String? = null) = session.brainSettings.update(baseUrl, model, apiKey)
     fun requestShizuku() = ShizukuManager.requestPermission()
     fun refreshShizuku() = ShizukuManager.updateStatus()
 }

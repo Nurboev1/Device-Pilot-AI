@@ -1,8 +1,6 @@
 package com.devicepilot.ai.agent
 
 import android.util.Log
-import com.devicepilot.ai.llm.LlamaEngine
-import com.devicepilot.ai.model.PromptStyle
 import com.devicepilot.ai.tools.Risk
 import com.devicepilot.ai.tools.ToolArgs
 import com.devicepilot.ai.tools.ToolRegistry
@@ -26,38 +24,18 @@ import org.json.JSONObject
  * CompletableDeferred that the UI completes.
  */
 class AgentRunner(
-    private val engine: LlamaEngine,
+    private val brain: () -> AgentBrain,
     private val registry: ToolRegistry,
     private val config: Config = Config(),
     private val autoConfirm: () -> Boolean = { false }
 ) {
     data class Config(
         val maxSteps: Int = 25,
-        val maxTokensPerStep: Int = 320,
-        val temperature: Float = 0.15f,
         val maxConsecutiveParseFailures: Int = 3
     )
 
     /** Conversation memory across tasks (user turns, replies, done summaries). */
     private val history = mutableListOf<Turn>()
-
-    private val hermesGrammar: String by lazy { ToolGrammar.build(registry) }
-    private val hammerGrammar: String by lazy { HammerPrompt.grammar(registry) }
-
-    private fun style(): PromptStyle = engine.loadedSpec?.promptStyle ?: PromptStyle.QWEN_HERMES
-
-    /** Constant prefix of every prompt (system + tools); prefilled once so the first step is fast. */
-    fun promptPrefix(deviceHint: String): String = when (style()) {
-        PromptStyle.HAMMER -> HammerPrompt.prefix(registry, deviceHint)
-        PromptStyle.QWEN_HERMES -> AgentPrompt.build(AgentPrompt.system(registry, deviceHint), emptyList()).substringBefore("<|im_start|>assistant")
-    }
-
-    private fun buildPrompt(prefix: String, turns: List<Turn>): String = when (style()) {
-        PromptStyle.HAMMER -> HammerPrompt.build(prefix, turns)
-        PromptStyle.QWEN_HERMES -> prefix + AgentPrompt.build("", turns)
-    }
-
-    private fun grammar(): String = if (style() == PromptStyle.HAMMER) hammerGrammar else hermesGrammar
 
     @Volatile private var pendingConfirmation: CompletableDeferred<Boolean>? = null
     @Volatile private var pendingAnswer: CompletableDeferred<String>? = null
@@ -65,14 +43,14 @@ class AgentRunner(
     fun confirm(approved: Boolean) { pendingConfirmation?.complete(approved) }
     fun answer(text: String) { pendingAnswer?.complete(text) }
     fun cancel() {
-        engine.cancel()
+        runCatching { brain().cancel() }
         pendingConfirmation?.complete(false)
         pendingAnswer?.cancel()
     }
-    fun clearHistory() { history.clear(); engine.resetCache() }
+    fun clearHistory() { history.clear(); runCatching { brain().reset() } }
 
     fun run(userText: String, deviceHint: String): Flow<AgentEvent> = channelFlow {
-        val prefix = promptPrefix(deviceHint)
+        val activeBrain = brain()
         history += Turn.User(userText)
         // Keep memory bounded: only keep the last few tasks' textual turns + this task's turns.
         trimHistory()
@@ -81,16 +59,16 @@ class AgentRunner(
         var parseFailures = 0
         var stepIndex = 0
         val recentCalls = ArrayDeque<String>()
+        // Successful/failed actions this task — used to write an honest final summary.
+        val completedSteps = mutableListOf<AgentStep>()
 
         try {
             while (stepIndex < config.maxSteps) {
                 currentCoroutineContext().ensureActive()
-                val prompt = buildPrompt(prefix, history + taskTurns)
-
                 // --- Think --------------------------------------------------------
                 val buf = StringBuilder()
                 val raw = withContext(Dispatchers.IO) {
-                    engine.generate(prompt, config.maxTokensPerStep, config.temperature, grammar()) { tok ->
+                    activeBrain.nextStep(registry, deviceHint, history + taskTurns) { tok ->
                         buf.append(tok)
                         trySend(AgentEvent.Thinking(buf.toString()))
                     }
@@ -142,7 +120,7 @@ class AgentRunner(
                 // --- Control tools --------------------------------------------------
                 when (tool.name) {
                     "done" -> {
-                        val summary = args.string("summary") ?: "Task complete."
+                        val summary = finalSummary(args.string("summary"), completedSteps)
                         history += Turn.Text(summary)
                         send(AgentEvent.Done(summary, stepIndex))
                         return@channelFlow
@@ -218,6 +196,7 @@ class AgentRunner(
                     durationMs = System.currentTimeMillis() - t0
                 )
                 send(AgentEvent.StepUpdated(step))
+                completedSteps += step
 
                 taskTurns += Turn.Assistant(call.thought, call.normalizedJson)
                 taskTurns += Turn.ToolOutput(tool.name, (if (result.success) "" else "ERROR: ") + result.output)
@@ -233,6 +212,38 @@ class AgentRunner(
             send(AgentEvent.Failed("${cause::class.java.simpleName}: ${cause.message ?: "no message"}"))
         }
     }.buffer(Channel.UNLIMITED)
+
+    /**
+     * Small models often write a `done` summary that contradicts what happened
+     * ("I couldn't do that" right after a successful set_wifi). We trust the tool
+     * results, not the model: if every action succeeded, report success; if the
+     * model's text is negative while results are positive, discard it.
+     */
+    private fun finalSummary(modelSummary: String?, steps: List<AgentStep>): String {
+        val actions = steps.filter { it.toolName !in setOf("get_screen", "wait", "get_device_state", "screenshot") }
+        if (actions.isEmpty()) return modelSummary?.takeIf { it.isNotBlank() } ?: "Done."
+        val ok = actions.filter { it.status == StepStatus.SUCCESS }
+        val failed = actions.filter { it.status == StepStatus.FAILED }
+        val denied = actions.filter { it.status == StepStatus.DENIED }
+
+        val negative = Regex("""\b(can'?t|cannot|couldn'?t|unable|not able|fail|sorry|no tool|don'?t have)\b""", RegexOption.IGNORE_CASE)
+        val modelOk = modelSummary?.takeIf { it.isNotBlank() && !(failed.isEmpty() && negative.containsMatchIn(it)) }
+
+        val sb = StringBuilder()
+        if (ok.isNotEmpty()) {
+            sb.append(if (ok.size == 1) "Done: ${ok.first().output.lineSequence().first().take(120)}" else "Done:\n" + ok.joinToString("\n") { "• ${it.summary} — ${it.output.lineSequence().first().take(80)}" })
+        }
+        if (failed.isNotEmpty()) {
+            if (sb.isNotEmpty()) sb.append("\n")
+            sb.append("Failed: " + failed.joinToString("; ") { "${it.summary} (${it.output.lineSequence().first().take(80)})" })
+        }
+        if (denied.isNotEmpty()) {
+            if (sb.isNotEmpty()) sb.append("\n")
+            sb.append("Skipped (you declined): " + denied.joinToString(", ") { it.summary })
+        }
+        // Prefer the model's own words when they're consistent with the outcome and add information.
+        return if (modelOk != null && failed.isEmpty() && ok.isNotEmpty()) modelOk else sb.toString().ifBlank { modelOk ?: "Done." }
+    }
 
     private fun trimHistory() {
         // Keep the last 6 textual turns of prior conversation to preserve context cheaply.

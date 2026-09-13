@@ -8,6 +8,8 @@ import com.devicepilot.ai.llm.ModelState
 import com.devicepilot.ai.model.DownloadState
 import com.devicepilot.ai.model.ModelManager
 import com.devicepilot.ai.model.ModelSpec
+import com.devicepilot.ai.model.BrainMode
+import com.devicepilot.ai.model.BrainSettings
 import com.devicepilot.ai.service.AgentForegroundService
 import com.devicepilot.ai.shizuku.ShizukuManager
 import com.devicepilot.ai.shizuku.ShizukuShell
@@ -50,7 +52,17 @@ class AgentSession(private val app: Context) {
     val engine = LlamaEngine()
     val models = ModelManager(app)
     val registry = ToolRegistry(app)
-    private val runner by lazy { AgentRunner(engine, registry, autoConfirm = { _autoConfirm.value }) }
+    val brainSettings = BrainSettings(app)
+
+    private val localBrain = LocalBrain(engine)
+    private val cloudBrain = CloudBrain { brainSettings.cloud.value }
+    private fun currentBrain(): AgentBrain = if (brainSettings.mode.value == BrainMode.CLOUD) cloudBrain else localBrain
+
+    private val runner by lazy { AgentRunner(::currentBrain, registry, autoConfirm = { _autoConfirm.value }) }
+
+    /** True when the selected brain can answer right now. */
+    val brainReady: StateFlow<Boolean> get() = _brainReady
+    private val _brainReady = MutableStateFlow(false)
 
     private val _messages = MutableStateFlow(listOf(welcome()))
     val messages: StateFlow<List<ChatMessage>> = _messages.asStateFlow()
@@ -74,15 +86,27 @@ class AgentSession(private val app: Context) {
                 engine.setState(ModelState.Downloading(models.selected.value, d.fraction, d.downloaded, d.total))
             }
         }.launchIn(scope)
-        scope.launch { prepareModel(models.selected.value) }
+        // Only download/load a local model when the user actually chooses offline mode.
+        scope.launch {
+            brainSettings.mode.collect { mode ->
+                if (mode == BrainMode.LOCAL && !engine.isReady) prepareModel(models.selected.value)
+                refreshReady()
+            }
+        }
+        scope.launch { brainSettings.cloud.collect { refreshReady() } }
+        scope.launch { engine.modelState.collect { refreshReady() } }
     }
+
+    private fun refreshReady() { _brainReady.value = currentBrain().isReady }
+
+    fun setBrainMode(mode: BrainMode) { if (!isRunning.value) brainSettings.setMode(mode) }
 
     // ---------------------------------------------------------------- models
 
     fun selectModel(spec: ModelSpec) {
         if (isRunning.value) return
         models.select(spec)
-        scope.launch { prepareModel(spec) }
+        if (brainSettings.mode.value == BrainMode.LOCAL) scope.launch { prepareModel(spec) }
     }
 
     fun retryModel() = scope.launch { prepareModel(models.selected.value) }
@@ -112,7 +136,7 @@ class AgentSession(private val app: Context) {
     private suspend fun warmUp() {
         if (!engine.isReady) return
         val hint = deviceHint().also { cachedHint = it }
-        engine.warmUp(runner.promptPrefix(hint))
+        localBrain.warmUp(registry, hint)
         Log.i(TAG, "Prompt warm-up complete")
     }
 

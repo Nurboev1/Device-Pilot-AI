@@ -18,6 +18,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Security
@@ -36,6 +37,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.devicepilot.ai.llm.ModelState
+import com.devicepilot.ai.model.BrainMode
 import com.devicepilot.ai.shizuku.ShizukuState
 import com.devicepilot.ai.ui.components.MessageBubble
 import com.devicepilot.ai.ui.screens.ModelSheet
@@ -50,6 +52,9 @@ fun ChatScreen(viewModel: ChatViewModel) {
     val selectedModel by viewModel.selectedModel.collectAsState()
     val installed by viewModel.installedModels.collectAsState()
     val autoConfirm by viewModel.autoConfirm.collectAsState()
+    val brainMode by viewModel.brainMode.collectAsState()
+    val cloudConfig by viewModel.cloudConfig.collectAsState()
+    val brainReady by viewModel.brainReady.collectAsState()
 
     var input by remember { mutableStateOf("") }
     var showModels by remember { mutableStateOf(false) }
@@ -78,13 +83,16 @@ fun ChatScreen(viewModel: ChatViewModel) {
     }
 
     val awaitingAnswer = last?.pendingQuestion != null
-    val modelReady = modelState is ModelState.Loaded
+    val modelReady = brainReady
 
     Surface(modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding(), color = DarkSlateBackground) {
         Column(Modifier.fillMaxSize()) {
             Header(
                 shizukuState = shizukuState,
                 modelState = modelState,
+                brainMode = brainMode,
+                cloudLabel = "${cloudConfig.providerName.substringBefore(" (")} · ${cloudConfig.model.substringAfterLast('/')}",
+                cloudReady = brainReady,
                 onShizukuClick = { if (shizukuState is ShizukuState.Unauthorized) viewModel.requestShizuku() else viewModel.refreshShizuku() },
                 onModelClick = { showModels = true },
                 onClear = { viewModel.clearChat() }
@@ -120,6 +128,7 @@ fun ChatScreen(viewModel: ChatViewModel) {
                 onTextChange = { input = it },
                 placeholder = when {
                     awaitingAnswer -> "Answer the agent…"
+                    !modelReady && brainMode == BrainMode.CLOUD -> "Add an API key in ⚙ to start"
                     !modelReady -> "Model not ready"
                     else -> "Tell DevicePilot what to do…"
                 },
@@ -133,6 +142,11 @@ fun ChatScreen(viewModel: ChatViewModel) {
 
     if (showModels) {
         ModelSheet(
+            brainMode = brainMode,
+            cloudConfig = cloudConfig,
+            onBrainMode = { viewModel.setBrainMode(it) },
+            onProvider = { viewModel.setProvider(it) },
+            onCloudUpdate = { b, m, k -> viewModel.updateCloud(b, m, k) },
             selected = selectedModel,
             installed = installed,
             modelState = modelState,
@@ -151,6 +165,9 @@ fun ChatScreen(viewModel: ChatViewModel) {
 private fun Header(
     shizukuState: ShizukuState,
     modelState: ModelState,
+    brainMode: BrainMode,
+    cloudLabel: String,
+    cloudReady: Boolean,
     onShizukuClick: () -> Unit,
     onModelClick: () -> Unit,
     onClear: () -> Unit
@@ -174,16 +191,18 @@ private fun Header(
             }
             StatusChip(Icons.Default.Security, sLabel, sColor, sBg, onShizukuClick)
 
-            val (mLabel, mColor, mBg) = when (modelState) {
+            val (mLabel, mColor, mBg) = if (brainMode == BrainMode.CLOUD) {
+                if (cloudReady) Triple(cloudLabel, StatusGreen, StatusGreenBg) else Triple("Cloud: add API key", StatusAmber, StatusAmberBg)
+            } else when (modelState) {
                 is ModelState.Loaded -> Triple(modelState.spec.displayName, StatusGreen, StatusGreenBg)
                 is ModelState.Loading -> Triple("Loading ${modelState.spec.displayName}…", StatusAmber, StatusAmberBg)
                 is ModelState.Downloading -> Triple("Downloading ${(modelState.fraction * 100).toInt()}%", AccentCyan, DarkSlateSurfaceVariant)
                 is ModelState.Error -> Triple("Model error — tap", StatusRose, StatusRoseBg)
                 ModelState.Unloaded -> Triple("No model", TextSecondary, DarkSlateSurfaceVariant)
             }
-            StatusChip(Icons.Default.Memory, mLabel, mColor, mBg, onModelClick)
+            StatusChip(if (brainMode == BrainMode.CLOUD) Icons.Default.Cloud else Icons.Default.Memory, mLabel, mColor, mBg, onModelClick)
         }
-        if (modelState is ModelState.Downloading) {
+        if (brainMode == BrainMode.LOCAL && modelState is ModelState.Downloading) {
             Spacer(Modifier.height(6.dp))
             LinearProgressIndicator(progress = { modelState.fraction }, modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)), color = AccentCyan, trackColor = DarkSlateSurfaceVariant)
         }
