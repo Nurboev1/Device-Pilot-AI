@@ -59,7 +59,7 @@ class ToolRegistry(context: Context) {
         ) { ToolResult.ok(it.requireString("question")) },
         SimpleTool(
             name = "reply",
-            description = "Reply conversationally when the user is chatting or asking a question that needs no device action. Ends the turn.",
+            description = "When you are ready to respond to the user without any device action (greetings, questions, explanations), use this function to deliver a concise reply. Ends the turn.",
             params = listOf(Param("message", "string", "")),
             category = "control", summary = { "Reply" }
         ) { ToolResult.ok(it.requireString("message")) }

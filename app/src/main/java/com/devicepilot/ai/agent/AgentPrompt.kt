@@ -51,7 +51,7 @@ Device: $deviceHint
 
     fun build(systemPrompt: String, turns: List<Turn>): String {
         val sb = StringBuilder()
-        sb.append("<|im_start|>system\n").append(systemPrompt).append("<|im_end|>\n")
+        if (systemPrompt.isNotEmpty()) sb.append("<|im_start|>system\n").append(systemPrompt).append("<|im_end|>\n")
 
         // Truncate older tool outputs aggressively; only the most recent one needs full detail.
         val lastToolIdx = turns.indexOfLast { it is Turn.ToolOutput }

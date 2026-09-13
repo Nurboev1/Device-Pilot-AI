@@ -14,6 +14,7 @@ object ToolCallParser {
 
     private val tagRegex = Regex("""<tool_call>\s*(.*?)\s*(</tool_call>|$)""", RegexOption.DOT_MATCHES_ALL)
     private val fenceRegex = Regex("""```(?:json)?\s*(\{.*?\})\s*```""", RegexOption.DOT_MATCHES_ALL)
+    private val arrayRegex = Regex("""\[\s*(\{.*\})\s*\]""", RegexOption.DOT_MATCHES_ALL)
 
     fun parse(raw: String): ParsedCall? {
         val text = raw.trim()
@@ -25,6 +26,11 @@ object ToolCallParser {
         tagRegex.find(text)?.let { m ->
             candidate = m.groupValues[1]
             thought = text.substring(0, m.range.first).trim().ifBlank { null }
+        }
+        // Hammer style: ```\n[{...}]\n```  (possibly several calls; we take the first)
+        if (candidate == null) arrayRegex.find(text)?.let { m ->
+            candidate = m.groupValues[1]
+            thought = null
         }
         if (candidate == null) fenceRegex.find(text)?.let { m ->
             candidate = m.groupValues[1]

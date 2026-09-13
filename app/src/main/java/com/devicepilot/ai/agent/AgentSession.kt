@@ -112,8 +112,7 @@ class AgentSession(private val app: Context) {
     private suspend fun warmUp() {
         if (!engine.isReady) return
         val hint = deviceHint().also { cachedHint = it }
-        val prefix = AgentPrompt.build(runner.systemPrompt(hint), emptyList()).substringBefore("<|im_start|>assistant")
-        engine.warmUp(prefix)
+        engine.warmUp(runner.promptPrefix(hint))
         Log.i(TAG, "Prompt warm-up complete")
     }
 

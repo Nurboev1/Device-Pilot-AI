@@ -2,6 +2,7 @@ package com.devicepilot.ai.agent
 
 import android.util.Log
 import com.devicepilot.ai.llm.LlamaEngine
+import com.devicepilot.ai.model.PromptStyle
 import com.devicepilot.ai.tools.Risk
 import com.devicepilot.ai.tools.ToolArgs
 import com.devicepilot.ai.tools.ToolRegistry
@@ -40,10 +41,23 @@ class AgentRunner(
     /** Conversation memory across tasks (user turns, replies, done summaries). */
     private val history = mutableListOf<Turn>()
 
-    private val grammar: String by lazy { ToolGrammar.build(registry) }
+    private val hermesGrammar: String by lazy { ToolGrammar.build(registry) }
+    private val hammerGrammar: String by lazy { HammerPrompt.grammar(registry) }
 
-    /** Constant prefix of every prompt; prefilled once so the first step is fast. */
-    fun systemPrompt(deviceHint: String): String = AgentPrompt.system(registry, deviceHint)
+    private fun style(): PromptStyle = engine.loadedSpec?.promptStyle ?: PromptStyle.QWEN_HERMES
+
+    /** Constant prefix of every prompt (system + tools); prefilled once so the first step is fast. */
+    fun promptPrefix(deviceHint: String): String = when (style()) {
+        PromptStyle.HAMMER -> HammerPrompt.prefix(registry, deviceHint)
+        PromptStyle.QWEN_HERMES -> AgentPrompt.build(AgentPrompt.system(registry, deviceHint), emptyList()).substringBefore("<|im_start|>assistant")
+    }
+
+    private fun buildPrompt(prefix: String, turns: List<Turn>): String = when (style()) {
+        PromptStyle.HAMMER -> HammerPrompt.build(prefix, turns)
+        PromptStyle.QWEN_HERMES -> prefix + AgentPrompt.build("", turns)
+    }
+
+    private fun grammar(): String = if (style() == PromptStyle.HAMMER) hammerGrammar else hermesGrammar
 
     @Volatile private var pendingConfirmation: CompletableDeferred<Boolean>? = null
     @Volatile private var pendingAnswer: CompletableDeferred<String>? = null
@@ -58,7 +72,7 @@ class AgentRunner(
     fun clearHistory() { history.clear(); engine.resetCache() }
 
     fun run(userText: String, deviceHint: String): Flow<AgentEvent> = channelFlow {
-        val systemPrompt = systemPrompt(deviceHint)
+        val prefix = promptPrefix(deviceHint)
         history += Turn.User(userText)
         // Keep memory bounded: only keep the last few tasks' textual turns + this task's turns.
         trimHistory()
@@ -71,12 +85,12 @@ class AgentRunner(
         try {
             while (stepIndex < config.maxSteps) {
                 currentCoroutineContext().ensureActive()
-                val prompt = AgentPrompt.build(systemPrompt, history + taskTurns)
+                val prompt = buildPrompt(prefix, history + taskTurns)
 
                 // --- Think --------------------------------------------------------
                 val buf = StringBuilder()
                 val raw = withContext(Dispatchers.IO) {
-                    engine.generate(prompt, config.maxTokensPerStep, config.temperature, grammar) { tok ->
+                    engine.generate(prompt, config.maxTokensPerStep, config.temperature, grammar()) { tok ->
                         buf.append(tok)
                         trySend(AgentEvent.Thinking(buf.toString()))
                     }
@@ -87,6 +101,13 @@ class AgentRunner(
                 }
 
                 val call = ToolCallParser.parse(raw)
+                if (call == null && raw.replace(Regex("[`\\s]"), "") == "[]") {
+                    // Hammer "no function applies" signal.
+                    val msg = "I don't have a tool for that. Could you rephrase or ask for something else?"
+                    history += Turn.Text(msg)
+                    send(AgentEvent.Reply(msg))
+                    return@channelFlow
+                }
                 if (call == null) {
                     // Model answered in plain text. Treat as a reply if it looks like prose and
                     // no tool has been used yet; otherwise nudge it back into the format.
