@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">DevicePilot AI</string>
+    <string name="shizuku_connected">Shizuku: Connected</string>
+    <string name="shizuku_unauthorized">Shizuku: Tap to Authorize</string>
+    <string name="shizuku_waiting">Shizuku: Not Running</string>
+    <string name="model_status_loaded">Model: Qwen2.5-0.5B Loaded</string>
+    <string name="model_status_loading">Model: Loading...</string>
+    <string name="model_status_fallback">Model: Ready (Rule-Engine Mode)</string>
+</resources>

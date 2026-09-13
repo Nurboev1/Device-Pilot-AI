@@ -1,0 +1,9 @@
+## This file must NOT be checked into Version Control Systems,
+# as it contains information specific to your local configuration.
+#
+# Location of the Android SDK:
+# Windows standard path:
+# sdk.dir=C\:\\Users\\Nurmuhammad\\AppData\\Local\\Android\\Sdk
+#
+# Or custom path:
+# sdk.dir=D\:\\Android\\Sdk
