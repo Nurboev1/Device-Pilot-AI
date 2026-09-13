@@ -15,11 +15,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-
         setContent {
             DevicePilotTheme {
-                val chatViewModel: ChatViewModel = viewModel()
-                ChatScreen(viewModel = chatViewModel)
+                val vm: ChatViewModel = viewModel()
+                ChatScreen(viewModel = vm)
             }
         }
     }

@@ -5,16 +5,16 @@ project("devicepilot-jni")
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Optimization flags for ARM64
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -Wall -Wextra")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O3 -Wall -Wextra")
 
-# Disable unnecessary components and build static libraries for Android
+# Trim llama.cpp down to the core library
 set(LLAMA_BUILD_COMMON OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+set(LLAMA_CURL OFF CACHE BOOL "" FORCE)
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(GGML_OPENMP OFF CACHE BOOL "" FORCE)
 set(GGML_LLAMAFILE OFF CACHE BOOL "" FORCE)
@@ -25,30 +25,21 @@ if(ANDROID_ABI STREQUAL "arm64-v8a")
     set(GGML_CPU_KLEIDIAI ON CACHE BOOL "" FORCE)
 endif()
 
-# If llama.cpp is present in the source tree as a submodule or directory, include it
-if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/llama.cpp/CMakeLists.txt")
-    add_subdirectory(llama.cpp)
-    include_directories(llama.cpp/include llama.cpp/ggml/include)
-    set(LLAMA_LIBS llama)
-else()
-    # Check for prebuilt libllama in jniLibs
-    include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
-    set(LLAMA_LIBS "")
+if (NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/llama.cpp/CMakeLists.txt")
+    message(FATAL_ERROR
+        "llama.cpp submodule is missing. Run:\n"
+        "  git submodule update --init --recursive\n"
+        "from the repository root before building.")
 endif()
 
-add_library(
-    devicepilot-jni
-    SHARED
-    llama-jni.cpp
-)
+add_subdirectory(llama.cpp)
 
-find_library(
-    log-lib
-    log
-)
+add_library(devicepilot-jni SHARED llama-jni.cpp)
 
-target_link_libraries(
-    devicepilot-jni
-    ${log-lib}
-    ${LLAMA_LIBS}
-)
+target_include_directories(devicepilot-jni PRIVATE
+    llama.cpp/include
+    llama.cpp/ggml/include)
+
+find_library(log-lib log)
+
+target_link_libraries(devicepilot-jni ${log-lib} llama)

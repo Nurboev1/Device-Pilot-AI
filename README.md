@@ -1,139 +1,126 @@
 # DevicePilot AI
 
-> **Autonomous On-Device AI Assistant with Deep Device Control (Android Native)**
-
-DevicePilot AI is a native Android application built in Kotlin with Jetpack Compose (Material 3 Dark Slate theme). It integrates an on-device local LLM (**Qwen2.5-0.5B-Instruct** in GGUF format via native `llama.cpp` JNI) and utilizes **Shizuku API** (elevated ADB permissions via Wireless Debugging) to execute privileged system-level actions via natural language instructions.
+> **An autonomous on-device agent for Android.** A small local LLM (Qwen2.5 0.5B / 1.5B via llama.cpp) sees your screen, taps, types, opens apps and changes system settings — all through Shizuku's ADB-level privileges. No cloud, no root.
 
 ---
 
-## 📱 Features
+## What it does
 
-- **On-Device Intelligence**: Local inference with Qwen2.5-0.5B-Instruct using ARM64-v8a native `llama.cpp` JNI bindings.
-- **Privileged System Control via Shizuku**:
-  - `set_screen_brightness(level: 0..255)` (`settings put system screen_brightness <val>`)
-  - `set_media_volume(level: 0..15)` (`cmd media_session volume --stream 3 --set <val>`)
-  - `toggle_wifi(state: Boolean)` (`svc wifi [enable|disable]`)
-  - `silent_uninstall_app(packageName: String)` (`pm uninstall <packageName>`)
-  - `list_installed_apps(filter: String)` (`pm list packages -3`)
-- **Real-Time Token Streaming**: Real-time token flow emission directly to Jetpack Compose chat bubbles with animated typing indicators.
-- **Tool Routing & Execution Cards**: Dedicated visual cards embedded in bot bubbles displaying tool names, arguments, command details, and real-time execution badges (`SUCCESS`, `FAILED`, `EXECUTING`).
-- **Dark Slate Aesthetic**: Designed with Material 3 dark palette, glassmorphism status chips, and high-contrast accessibility.
-- **Resilient Fallback Mode**: If the GGUF model weights are not yet downloaded, DevicePilot AI automatically activates its simulated grammar engine so you can test and operate Shizuku commands immediately.
+Tell it a goal in plain language and it works through it step by step, showing every action it takes:
 
----
+- *"Turn on dark mode and set brightness to 40%"*
+- *"Open Telegram, search for Ali and open the chat"*
+- *"Which apps have camera permission? Revoke it for TikTok."*
+- *"Read my notifications and dismiss them"*
+- *"Connect to the Wi-Fi called Office"*
 
-## 🏗️ System Architecture
+The agent runs a **ReAct loop**: it reads the device/screen, picks one tool, observes the result, and repeats until it calls `done`. Destructive actions (uninstall, clear data, shell commands, reboot…) pause for an in-chat **Allow / Deny** confirmation. It can ask you a question mid-task when it needs information.
+
+## Architecture
 
 ```
-┌────────────────────────────────────────────────────────────────┐
-│                   Jetpack Compose UI (Chat)                    │
-│   - Real-time token streaming                                  │
-│   - Shizuku Status Badge (Connected / Missing / Waiting)       │
-│   - Model Status Badge (Loaded / Memory Usage / Speed)         │
-└───────────────────────────────┬────────────────────────────────┘
-                                │
-                                ▼
-┌────────────────────────────────────────────────────────────────┐
-│           Orchestrator & Tool Routing Engine                   │
-│   1. Receives user natural language prompt.                    │
-│   2. Calls native llama.cpp (Qwen2.5-0.5B-Instruct).           │
-│   3. Detects if output is an actionable tool JSON call.        │
-│      - If Tool: Dispatches to Shizuku DeviceController.        │
-│      - If Conversation: Streams response directly to UI.       │
-└──────────────────┬───────────────────────────┬─────────────────┘
-                   │                           │
-                   ▼                           ▼
-┌────────────────────────────────┐ ┌─────────────────────────────┐
-│    llama.cpp Android JNI       │ │   Shizuku DeviceController  │
-│   - ARM64 native binaries      │ │   - Shizuku.newProcess()    │
-│   - Loads Qwen2.5-0.5B GGUF    │ │   - `pm uninstall`          │
-│   - Prompt template formatter  │ │   - `settings put system`   │
-│   - Token inference loop       │ │   - `svc wifi`              │
-└────────────────────────────────┘ └─────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│  Compose UI                                                      │
+│  chat · per-step cards (thought → action → result) · confirm     │
+│  cards · model picker + downloader · Stop button                 │
+└───────────────┬──────────────────────────────────────────────────┘
+                │ AgentSession (Application scope, survives Activity)
+                ▼
+┌──────────────────────────────────────────────────────────────────┐
+│  AgentRunner — ReAct loop                                        │
+│  build ChatML prompt → LlamaEngine → ToolCallParser              │
+│  → risk gate (SAFE / LOW / CONFIRM) → Tool.execute → feed result │
+│  loop detection · step cap · ask_user / reply / done             │
+└──────┬─────────────────────────────────────┬─────────────────────┘
+       │                                     │
+       ▼                                     ▼
+┌──────────────────────┐        ┌───────────────────────────────────┐
+│ LlamaEngine (JNI)    │        │ ToolRegistry  (~60 tools)         │
+│ llama.cpp, KV-cache  │        │  screen: get_screen, tap_element, │
+│ prefix reuse across  │        │   type_text, swipe, press_key…    │
+│ steps, cancel, UTF-8 │        │  apps: open_app, list_apps,       │
+│ safe streaming       │        │   uninstall, permissions…         │
+└──────────────────────┘        │  system: wifi, bt, brightness,    │
+                                │   DND, dark mode, alarms, intents…│
+┌──────────────────────┐        │  files / info / shell (guarded)   │
+│ ModelManager         │        └───────────────┬───────────────────┘
+│ HF download, resume, │                        ▼
+│ 0.5B ⇄ 1.5B switch   │        ┌───────────────────────────────────┐
+└──────────────────────┘        │ ShizukuShell  → Shizuku.newProcess│
+                                │ (adb shell privileges)            │
+┌──────────────────────┐        └───────────────────────────────────┘
+│ AgentForegroundSvc   │  keeps the loop alive while the agent drives
+│ + floating STOP pill │  other apps; notification shows current step
+└──────────────────────┘
 ```
 
----
+### Key packages
 
-## 📂 Directory Layout
+| Package | Purpose |
+|---|---|
+| `agent/` | `AgentRunner` (loop), `AgentPrompt` (ChatML + compact tool catalog), `ToolCallParser` (lenient JSON), `AgentSession` (app-scoped state) |
+| `tools/` | `Tool`/`ToolRegistry`, `UiTools` (perception + input), `AppTools`, `SystemTools`, `ScreenReader` (uiautomator → indexed elements), `ShellGuard` (blocklist) |
+| `llm/` | `LlamaEngine` Kotlin wrapper over `cpp/llama-jni.cpp` |
+| `model/` | `ModelCatalog`, `ModelManager` (download / resume / select) |
+| `service/` | Foreground service + overlay Stop button |
+| `shizuku/` | `ShizukuManager` (binder/permission), `ShizukuShell` (exec) |
+
+### Screen perception
+
+`get_screen` runs `uiautomator dump`, parses the hierarchy and gives the model a compact indexed list:
 
 ```
-DevicePilotAI/
-├── app/
-│   ├── build.gradle.kts
-│   ├── proguard-rules.pro
-│   └── src/
-│       └── main/
-│           ├── AndroidManifest.xml
-│           ├── cpp/
-│           │   ├── CMakeLists.txt
-│           │   ├── llama-jni.cpp
-│           │   └── include/
-│           │       └── llama.h
-│           ├── java/com/devicepilot/ai/
-│           │   ├── DevicePilotApp.kt
-│           │   ├── MainActivity.kt
-│           │   ├── llm/
-│           │   │   ├── LlamaEngine.kt
-│           │   │   └── ToolRouter.kt
-│           │   ├── shizuku/
-│           │   │   ├── DeviceController.kt
-│           │   │   └── ShizukuManager.kt
-│           │   └── ui/
-│           │       ├── ChatScreen.kt
-│           │       ├── ChatViewModel.kt
-│           │       └── theme/
-│           │           ├── Color.kt
-│           │           └── Theme.kt
-│           └── res/
-│               ├── values/
-│               │   ├── colors.xml
-│               │   ├── strings.xml
-│               │   └── themes.xml
-│               └── xml/
-│                   ├── backup_rules.xml
-│                   └── data_extraction_rules.xml
-├── gradle/wrapper/
-│   └── gradle-wrapper.properties
-├── build.gradle.kts
-├── settings.gradle.kts
-├── gradle.properties
-├── gradlew
-└── gradlew.bat
+app=org.telegram.messenger activity=LaunchActivity screen=1080x2400
+[0] button desc="Open navigation menu" @66,150
+[1] input "Search" id=search_field @540,150
+[2] text "Ali Karimov" @400,420
+...
 ```
 
----
+The model then calls `tap_element(index=1)` — it never guesses coordinates.
 
-## 🚀 Getting Started
+### Safety model
 
-### 1. Requirements
-- **Android Studio**: Iguana (2023.2.1) or Koala (2024.1.1+)
-- **Android SDK**: API 34 (Android 14)
-- **NDK**: Version 25.x or 26.x
-- **Device / Emulator**: Android 8.0+ (API 26+) with `arm64-v8a` architecture
+| Risk | Examples | Behaviour |
+|---|---|---|
+| `SAFE` | get_screen, list_apps, get_device_state | runs immediately |
+| `LOW` | tap, type, open_app, set_wifi, set_brightness | runs immediately, shown in step card |
+| `CONFIRM` | uninstall_app, clear_app_data, set_permission, install_apk, shell, reboot, write/delete_file | pauses for Allow/Deny (can be disabled in settings) |
 
-### 2. Setting up Shizuku on your Android Device
-1. Install **Shizuku** from Google Play Store or GitHub releases.
-2. Open **Developer Options** on your phone and enable **Wireless Debugging**.
-3. Open Shizuku, tap **Start via Wireless Debugging**, and pair using the pairing code notification.
-4. Once Shizuku shows *"Shizuku is running"*, launch DevicePilot AI.
-5. Tap the yellow **Shizuku: Tap to Authorize** chip at the top of DevicePilot AI and grant permission.
+`ShellGuard` additionally hard-blocks commands that could brick the device or lock out Shizuku/DevicePilot (`rm -rf /`, factory reset, disabling SystemUI, `su`, etc.), regardless of confirmation.
 
-### 3. Deploying Qwen2.5-0.5B-Instruct Model (Optional)
-To run full local neural inference:
-1. Download `qwen2.5-0.5b-instruct-q4_k_m.gguf` (~390 MB) from Hugging Face:
-   ```bash
-   curl -L -o qwen2.5-0.5b-instruct-q4_k_m.gguf \
-     https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf
-   ```
-2. Push the model to your device's Download folder:
-   ```bash
-   adb push qwen2.5-0.5b-instruct-q4_k_m.gguf /sdcard/Download/
-   ```
-3. DevicePilot AI automatically discovers the file on startup.
+## Models
 
-### 4. Build & Run
-Run from terminal:
+| Model | Size | RAM | Notes |
+|---|---|---|---|
+| Qwen2.5-0.5B-Instruct Q4_K_M (default) | ~490 MB | 3 GB+ | fast; good for 1–3 step tasks |
+| Qwen2.5-1.5B-Instruct Q4_K_M | ~1.1 GB | 6 GB+ | recommended for multi-step UI automation |
+
+Switch in **⚙ → Model**. The selected model is downloaded from Hugging Face on first use (resumable) into `Android/data/com.devicepilot.ai/files/models/`. If you already have the GGUF in `Download/`, it is imported automatically.
+
+## Build
+
 ```bash
+git clone --recursive https://github.com/Nurboev1/Device-Pilot-AI
+# or, if already cloned:
+git submodule update --init --recursive     # pulls llama.cpp
+
+cp local.properties.example local.properties  # set sdk.dir
 ./gradlew assembleDebug
 ```
-Or open the `DevicePilotAI` directory in Android Studio and press **Run** (`Shift + F10`).
+
+Requirements: Android Studio Koala+, NDK 26.1, CMake 3.22, arm64-v8a device on Android 8+ (Android 11+ recommended for `cmd wifi connect-network`, `cmd uimode`, etc.).
+
+## Setup on device
+
+1. Install [Shizuku](https://shizuku.rikka.app/), start it (Wireless debugging or root).
+2. Open DevicePilot → tap the Shizuku chip → grant permission.
+3. Grant **Display over other apps** (floating Stop button) and notifications when prompted.
+4. Wait for the model to download and load, then give it a task.
+
+## Limitations
+
+- `type_text` uses `input text`, which is ASCII-only on most ROMs. Non-Latin text may not be typed correctly.
+- Secure screens (banking apps, password fields flagged `FLAG_SECURE`) return no UI hierarchy.
+- 0.5B is a very small model: it may loop or misread complex screens. Use 1.5B for anything beyond simple settings changes.
+- Some `cmd`/`svc` sub-commands vary by OEM and Android version; tools report the raw error when a command isn't supported.
